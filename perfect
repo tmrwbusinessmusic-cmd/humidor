@@ -1,0 +1,881 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged,
+  signInWithCustomToken
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  deleteDoc, 
+  doc,
+  serverTimestamp 
+} from 'firebase/firestore';
+import { 
+  Star, 
+  Flame, 
+  Trash2, 
+  PlusCircle, 
+  Search, 
+  Cigarette, 
+  Quote,
+  Loader2,
+  DownloadCloud,
+  AlertCircle,
+  Image as ImageIcon,
+  Library,
+  BookOpen,
+  X,
+  ChevronDown,
+  ArrowLeft,
+  BarChart3,
+  Wind,
+  Thermometer,
+  Menu,
+  Filter,
+  BoxSelect,
+  Layers 
+} from 'lucide-react';
+
+// --- Firebase Setup ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- Reliable Image Assets (The Vault) ---
+const CIGAR_IMAGES = {
+  maduro: "https://images.unsplash.com/photo-1614692944429-0f73016b9e78?auto=format&fit=crop&q=80&w=800", 
+  connecticut: "https://images.unsplash.com/photo-1536700503339-1e4c08641337?auto=format&fit=crop&q=80&w=800", 
+  habano: "https://images.unsplash.com/photo-1576504677634-06b7e3d0e133?auto=format&fit=crop&q=80&w=800", 
+  torpedo: "https://images.unsplash.com/photo-1599408259483-161011009462?auto=format&fit=crop&q=80&w=800", 
+  infused: "https://images.unsplash.com/photo-1616785693955-2d0504cb3f2e?auto=format&fit=crop&q=80&w=800", 
+  boxpressed: "https://images.unsplash.com/photo-1527661591475-527312dd65f5?auto=format&fit=crop&q=80&w=800", 
+  tubo: "https://images.unsplash.com/photo-1552325363-134779645078?auto=format&fit=crop&q=80&w=800", 
+  generic_dark: "https://images.unsplash.com/photo-1579888944880-d98341245702?auto=format&fit=crop&q=80&w=800",
+  generic_light: "https://images.unsplash.com/photo-1624048282634-2284771c6238?auto=format&fit=crop&q=80&w=800",
+};
+
+// Helper to pick the right image
+const getImageForCigar = (cigar) => {
+  const text = (cigar.description + " " + cigar.name + " " + (cigar.shape || "") + " " + (cigar.wrapper || "")).toLowerCase();
+  
+  if (text.includes("tube") || text.includes("tubo")) return CIGAR_IMAGES.tubo;
+  if (text.includes("torpedo") || text.includes("belicoso") || text.includes("pyramid") || text.includes("figurado")) return CIGAR_IMAGES.torpedo;
+  if (text.includes("box-pressed") || text.includes("box pressed")) return CIGAR_IMAGES.boxpressed;
+  
+  if (text.includes("maduro") || text.includes("oscuro") || text.includes("broadleaf") || text.includes("dark") || text.includes("san andres") || text.includes("san andrés")) return CIGAR_IMAGES.maduro;
+  if (text.includes("connecticut") || text.includes("shade") || text.includes("champagne") || text.includes("blonde") || text.includes("light") || text.includes("clar")) return CIGAR_IMAGES.connecticut;
+  if (text.includes("infused") || text.includes("flavor") || text.includes("acid")) return CIGAR_IMAGES.infused;
+  
+  if (text.includes("habano") || text.includes("sun grown") || text.includes("rosado") || text.includes("corojo") || text.includes("sumatra")) return CIGAR_IMAGES.habano;
+  
+  return text.includes("full-bodied") ? CIGAR_IMAGES.generic_dark : CIGAR_IMAGES.generic_light;
+};
+
+// --- Data: The Vault (Expanded Catalog with Wrappers) ---
+const CIGAR_CATALOG = [
+  // A
+  { brand: "Acid", name: "Kuba Kuba", shape: "Robusto", wrapper: "Sumatra", description: "The undisputed king of infused cigars. Wrapped in a sweet Sumatra leaf and infused with over 140 herbs and botanicals. Tastes of floral incense, sugar, and tea." },
+  { brand: "Acid", name: "20", shape: "Robusto Box-Pressed", wrapper: "Mexican San Andrés", description: "A box-pressed celebratory blend. Mexican San Andrés wrapper with a more subtle infusion. Sweet, savory, and metallic notes." },
+  { brand: "AJ Fernandez", name: "New World", shape: "Gordo Box-Pressed", wrapper: "Nicaragua Oscuro", description: "A box-pressed Nicaraguan puro wrapped in dark Oscuro. Rich notes of espresso, chocolate, and nuts. A modern classic." },
+  { brand: "AJ Fernandez", name: "Enclave", shape: "Toro", wrapper: "Ecuador Habano Rosado", description: "Habano Rosado wrapper. Spicy and woody with notes of cinnamon, cedar, and white pepper." },
+  { brand: "Alec Bradley", name: "Prensado", shape: "Churchill", wrapper: "Honduras Corojo", description: "Cigar of the Year 2011. Full-bodied Honduran Trojes Corojo wrapper. Leather, chocolate, and heavy spice." },
+  { brand: "Alec Bradley", name: "Black Market", shape: "Gordo", wrapper: "Nicaragua Jalapa", description: "Dark Nicaraguan wrapper. Creamy, cool smoke with hints of peat, spice, and cocoa." },
+  { brand: "Alec Bradley", name: "Magic Toast", shape: "Toro", wrapper: "Honduras", description: "Dark and mysterious. Notes of dark chocolate, wood, and a natural sweetness." },
+  { brand: "Arturo Fuente", name: "Hemingway Short Story", shape: "Perfecto", wrapper: "Cameroon", description: "The perfect short smoke. Cameroon wrapper in a figurado shape. Sweet cedar, nutmeg, and baking spices." },
+  { brand: "Arturo Fuente", name: "Don Carlos", shape: "Robusto", wrapper: "Cameroon", description: "Vintage Cameroon wrapper aged 10 years. Impeccably balanced with notes of eucalyptus and chestnut." },
+  { brand: "Arturo Fuente", name: "Fuente Fuente OpusX", shape: "Double Corona", wrapper: "Dominican Rosado", description: "The first Dominican Puro. Iconic shade-grown Rosado wrapper. Intense leather, spice, and distinct floral sweetness." },
+  { brand: "Ashton", name: "Classic", shape: "Magnum", wrapper: "Connecticut Shade", description: "Mild, creamy Connecticut Shade. Notes of vanilla, almond, and coffee. The definition of elegance." },
+  { brand: "Ashton", name: "VSG", shape: "Sorcerer", wrapper: "Ecuador Sumatra", description: "Virgin Sun Grown. Dark Ecuadorian Sumatra wrapper. Powerful punch of espresso, cedar, and black cherry." },
+  { brand: "Ave Maria", name: "Reconquista", shape: "Torpedo Box-Pressed", wrapper: "Brazilian Habano", description: "Brazilian Habano wrapper. Dense, full-bodied, box-pressed. Roasted coffee and earth." },
+  { brand: "Avo", name: "Classic", shape: "Robusto", wrapper: "Ecuador Connecticut", description: "Creamy, musical blend by Avo Uvezian. Connecticut shade wrapper with complex Dominican fillers." },
+  
+  // B
+  { brand: "Baccarat", name: "The Game", shape: "Rothschild", wrapper: "Honduras Connecticut", description: "Famous for its sweet gum cap. Very mild, aromatic, and easy-going. A top seller for beginners." },
+  { brand: "Bolívar", name: "Belicosos Finos", shape: "Belicoso", wrapper: "Cuban", description: "A Cuban legend. Full-bodied earthy powerhouse with leather, wood, and heavy spice." },
+  { brand: "Brick House", name: "Classic", shape: "Robusto", wrapper: "Ecuador Havana Subido", description: "Nicaraguan puro with a Havana Subido wrapper. Toasted sweet profile of maple and red fruit." },
+  
+  // C
+  { brand: "Cain", name: "Nub", shape: "Gordo (4x60)", wrapper: "Nicaragua", description: "Short, stout, and potent. Designed to hit the 'sweet spot' immediately. Heavy ligero content." },
+  { brand: "Camacho", name: "Corojo", shape: "Robusto", wrapper: "Honduras Corojo", description: "The 'Live Loud' cigar. 100% authentic Corojo. Bold, punchy flavors of cayenne and citrus." },
+  { brand: "Camacho", name: "Connecticut", shape: "Toro", wrapper: "Ecuador Connecticut", description: "A mild cigar with a kick. Creamy citrus and nuttiness without sacrificing flavor." },
+  { brand: "CAO", name: "Brazilia", shape: "Gol!", wrapper: "Brazil Arapiraca", description: "Dark Brazilian Arapiraca wrapper. Exotic spices, black pepper, and floral undertones." },
+  { brand: "CAO", name: "Flathead", shape: "V660", wrapper: "Connecticut Broadleaf", description: "Box-pressed with a flat head. Connecticut Broadleaf wrapper. Gritty leather, molasses, and earth." },
+  { brand: "Charter Oak", name: "Connecticut", shape: "Rothschild", wrapper: "Connecticut Shade", description: "High value, genuine Connecticut Shade. Buttery, smooth, and honeyed." },
+  { brand: "Cohiba", name: "Red Dot", shape: "Robusto", wrapper: "Cameroon", description: "Dominican version with a Cameroon wrapper. Spicy-nutty flavor with caramel and leather." },
+  { brand: "Cohiba", name: "Black", shape: "Supremo", wrapper: "Connecticut Broadleaf", description: "Connecticut Broadleaf Maduro. Deep espresso, chocolate, and maduro sweetness." },
+  
+  // D
+  { brand: "Davidoff", name: "Aniversario", shape: "No. 3", wrapper: "Ecuador Connecticut", description: "Luxury refined. Medium-bodied with exquisite cedar, cream, and white pepper." },
+  { brand: "Davidoff", name: "The Late Hour", shape: "Churchill", wrapper: "Ecuador Habano", description: "Aged in Scotch whisky casks. Deep complexity of dark chocolate, peat, and oak." },
+  { brand: "Davidoff", name: "Nicaragua", shape: "Toro Box-Pressed", wrapper: "Nicaragua Habano Rosado", description: "Davidoff's journey into fire. Bittersweet chocolate, spice, and volcanic earth." },
+  { brand: "Diesel", name: "Unlimited", shape: "d.5", wrapper: "Pennsylvania Broadleaf", description: "Rustic and bold. Pennsylvania Broadleaf wrapper. Intense leather and spice." },
+  { brand: "Don Pepin Garcia", name: "Blue Label", shape: "Invictos", wrapper: "Nicaragua Corojo", description: "The original pepper bomb. Nicaraguan Corojo Oscuro. Intense spice mellowing to wood." },
+  
+  // E
+  { brand: "E.P. Carrillo", name: "Pledge", shape: "Prequel", wrapper: "Connecticut Havana", description: "Cigar of the Year 2020. Connecticut Havana seed wrapper. Spiced oak, licorice, and black cherry." },
+  { brand: "E.P. Carrillo", name: "La Historia", shape: "E-III", wrapper: "Mexican San Andrés", description: "Mexican San Andrés wrapper. Rich chocolate, espresso, and dark fruit." },
+  
+  // F
+  { brand: "Flor de las Antillas", name: "Original", shape: "Toro", wrapper: "Nicaragua Sun Grown", description: "Cigar of the Year 2012. Sun-grown Nicaraguan puro. Smooth, creamy, cocoa, and white pepper." },
+  
+  // H
+  { brand: "H. Upmann", name: "The Banker", shape: "Annuity", wrapper: "Ecuador Habano", description: "Medium-bodied with notes of coffee and spice. A tribute to the brand's banking roots." },
+  { brand: "H. Upmann", name: "Vintage Cameroon", shape: "Belicoso", wrapper: "Cameroon", description: "Classic Cameroon wrapper. Sweet, nutty, and cedar-forward." },
+  { brand: "Hoyo de Monterrey", name: "Excalibur", shape: "No. 1", wrapper: "Connecticut Shade", description: "A reliable classic. Mild-to-medium with a smooth, nutty finish." },
+  
+  // J
+  { brand: "Java", name: "Mint", shape: "Robusto", wrapper: "Brazil Mata Fina", description: "Infused with mint and mocha. Cool, sweet, dessert-like finish." },
+  { brand: "Joya de Nicaragua", name: "Antano 1970", shape: "Gran Consul", wrapper: "Nicaragua Habano", description: "The quintessential strong cigar. Full-bodied, earthy, and spicy." },
+  
+  // L
+  { brand: "La Aroma de Cuba", name: "Mi Amor", shape: "Magnifico", wrapper: "Mexican San Andrés", description: "Box-pressed Mexican San Andrés wrapper. Espresso, nougat, and cracked pepper." },
+  { brand: "La Aroma de Cuba", name: "Edicion Especial", shape: "No. 5", wrapper: "Ecuador Habano", description: "Cuban-seed Ecuadorian wrapper. Smoked walnut, leather, and spice." },
+  { brand: "La Flor Dominicana", name: "Double Ligero", shape: "Chisel", wrapper: "Ecuador Sumatra", description: "Extremely strong. Packed with Ligero. Dizzying nicotine kick with pepper." },
+  { brand: "La Flor Dominicana", name: "Andalusian Bull", shape: "Figurado", wrapper: "Ecuador Corojo", description: "Cigar of the Year 2016. Unique figurado. Saffron, cumin, and leather." },
+  { brand: "La Gloria Cubana", name: "Serie R", shape: "No. 5", wrapper: "Ecuador Sumatra", description: "Large ring gauges. Spicy, earthy, and full-bodied." },
+  { brand: "Liga Privada", name: "No. 9", shape: "Toro", wrapper: "Connecticut Broadleaf", description: "Connecticut Broadleaf. Rich, oily, massive smoke output. Espresso and damp earth." },
+  { brand: "Liga Privada", name: "T52", shape: "Belicoso", wrapper: "Connecticut Habano", description: "Stalk-cut Habano wrapper. Spicy, robust, orange zest and leather." },
+  
+  // M
+  { brand: "Macanudo", name: "Cafe", shape: "Hyde Park", wrapper: "Connecticut Shade", description: "Best-selling mild cigar. Light grass and cream notes. Very approachable." },
+  { brand: "Montecristo", name: "White Series", shape: "Rothschild", wrapper: "Ecuador Connecticut", description: "Creamy and flavorful Ecuadorian Connecticut. A step up in body from the original." },
+  { brand: "Montecristo", name: "No. 2", shape: "Piramide", wrapper: "Connecticut Shade", description: "Legendary torpedo. Classic profile of coffee, cocoa, and vanilla." },
+  { brand: "My Father", name: "Le Bijou 1922", shape: "Torpedo", wrapper: "Nicaragua Habano Oscuro", description: "Cigar of the Year 2015. Habano Oscuro wrapper. Chocolate-covered raisins and pepper." },
+  { brand: "My Father", name: "The Judge", shape: "Grand Robusto", wrapper: "Ecuador Sumatra", description: "Box-pressed Ecuadorian Sumatra. Cedar, nuts, and leather." },
+  
+  // N
+  { brand: "Nub", name: "Cameroon", shape: "460", wrapper: "Cameroon", description: "Short and stout. Sweet and spicy 'sweet spot' from the first light." },
+  { brand: "Nub", name: "Maduro", shape: "460", wrapper: "Brazil Arapiraca", description: "Brazilian Arapiraca wrapper. Dark chocolate and coffee notes in a short format." },
+  
+  // O
+  { brand: "Oliva", name: "Serie V", shape: "Churchill Extra", wrapper: "Ecuador Habano", description: "High-priming Ligero. Potent spice, coffee, and dark chocolate." },
+  { brand: "Oliva", name: "Serie V Melanio", shape: "Figurado", wrapper: "Ecuador Sumatra", description: "Cigar of the Year 2014. Sumatra wrapper. Exceptionally smooth, creamy, caramel." },
+  { brand: "Oliva", name: "Serie O", shape: "Robusto", wrapper: "Nicaragua Habano", description: "Nicaraguan Puro with Habano seeds. Cedar, cherries, and earth." },
+  
+  // P
+  { brand: "Padrón", name: "1964 Anniversary", shape: "Exclusivo", wrapper: "Nicaragua", description: "Box-pressed, aged 4 years. Loose draw. Incredible notes of cocoa and coffee." },
+  { brand: "Padrón", name: "1926 Series", shape: "No. 9", wrapper: "Nicaragua", description: "Aged 5 years. Stronger, fuller, robust. Intense spice and earth." },
+  { brand: "Padrón", name: "Dámaso", shape: "No. 15", wrapper: "Ecuador Connecticut", description: "Padrón's mild Connecticut. Creamy but retains signature pepper." },
+  { brand: "Partagás", name: "Serie D No. 4", shape: "Robusto", wrapper: "Cameroon", description: "Popular Cuban Robusto. Full-bodied, rich earth, spice, and wood." },
+  { brand: "Perdomo", name: "10th Anniversary Champagne", shape: "Epicure", wrapper: "Ecuador Connecticut", description: "Bourbon barrel-aged Connecticut wrapper. Creamy, oaky, and spicy." },
+  { brand: "Perdomo", name: "20th Anniversary Sun Grown", shape: "Epicure", wrapper: "Nicaragua Sun Grown", description: "Sun-grown wrapper aged in bourbon barrels. Spicy, woody, and rich." },
+  { brand: "Punch", name: "Clasico", shape: "Rothschild", wrapper: "Ecuador Sumatra", description: "Reliable Honduran classic. Full-bodied, earthy, and straightforward." },
+  
+  // R
+  { brand: "Rocky Patel", name: "Decade", shape: "Robusto", wrapper: "Ecuador Sumatra", description: "Dark Sumatra wrapper. Smooth, creamy, black cherry, and hickory." },
+  { brand: "Rocky Patel", name: "Vintage 1990", shape: "Robusto", wrapper: "Connecticut Broadleaf", description: "12-year aged broadleaf wrapper. Cocoa and nutty flavors." },
+  { brand: "Rocky Patel", name: "Sun Grown Maduro", shape: "Robusto", wrapper: "Connecticut Broadleaf", description: "Broadleaf wrapper. Full-bodied, dessert-like richness." },
+  { brand: "Romeo y Julieta", name: "1875", shape: "Bully", wrapper: "Indonesia", description: "Classic 'Romeo'. Toasty, nutty Indonesian wrapper. Medium-bodied." },
+  { brand: "Romeo y Julieta", name: "Reserva Real", shape: "Toro", wrapper: "Ecuador Connecticut", description: "Connecticut shade wrapper with Nicaraguan guts. Creamy but flavorful." },
+  
+  // S
+  { brand: "San Cristobal", name: "Revelation", shape: "Prophet", wrapper: "Ecuador Sumatra", description: "Milk chocolate hue. Cocoa, cedar, and cinnamon notes." },
+  { brand: "San Cristobal", name: "Elegancia", shape: "Imperial", wrapper: "Ecuador Connecticut", description: "Golden Connecticut wrapper. White pepper and cream." },
+  
+  // T
+  { brand: "Tatuaje", name: "Black Label", shape: "Corona Gorda", wrapper: "Nicaragua Sun Grown Criollo", description: "Old-school Cuban style. Rustic, earthy, spicy. Closed foot." },
+  { brand: "Tatuaje", name: "Havana VI", shape: "Robusto", wrapper: "Ecuador Habano", description: "Red Label. Great medium-bodied smoke. Pepper and leather." },
+  { brand: "Trinidad", name: "Fundadores", shape: "Lancero", wrapper: "Habano", description: "Created for Fidel Castro. Elegant lancero. Nuts, coffee, and vanilla bean." },
+  
+  // U
+  { brand: "Undercrown", name: "Maduro", shape: "Gran Toro", wrapper: "Mexican San Andrés", description: "San Andrés wrapper. Smoky, sweet, earthy. Affordable Liga Privada alternative." },
+  { brand: "Undercrown", name: "Shade", shape: "Gran Toro", wrapper: "Ecuador Connecticut", description: "Creamy, lush Connecticut. Flavorful mildness." },
+  
+  // W
+  { brand: "Warped", name: "La Colmena", shape: "Amado No. 44", wrapper: "Ecuador Desflorado", description: "Rolled in Miami. 'The Beehive'. Honey, vanilla, and cream." }
+];
+
+const SAMPLE_REVIEWS = [
+  {
+    brand: "Cohiba",
+    cigarName: "Behike 52",
+    rating: 5,
+    imageUrl: "https://images.unsplash.com/photo-1576504677634-06b7e3d0e133?auto=format&fit=crop&q=80&w=800",
+    notes: "The holy grail of Cubans. Exceptionally smooth with signature notes of hay, sweet grass, and a creamy vanilla finish. The Laguito No. 4 wrapper is flawless. A special occasion smoke that lives up to the hype.",
+  },
+  {
+    brand: "Padrón",
+    cigarName: "1964 Anniversary Series Exclusivo",
+    rating: 5,
+    imageUrl: "https://images.unsplash.com/photo-1527661591475-527312dd65f5?auto=format&fit=crop&q=80&w=800",
+    notes: "A chocolate bomb. This box-pressed beauty offers a loose draw typical of Padrón with heavy smoke output. Dominant notes of cocoa, espresso, and damp earth. Consistent construction every single time.",
+  },
+  {
+    brand: "Davidoff",
+    cigarName: "Winston Churchill The Late Hour",
+    rating: 5,
+    imageUrl: "https://images.unsplash.com/photo-1579888944880-d98341245702?auto=format&fit=crop&q=80&w=800",
+    notes: "Aged in single malt scotch casks, and it shows. Deep, dark flavors of oak, dark chocolate, and a hint of peaty sweetness on the retrohale. Elegant, refined, and complex.",
+  }
+];
+
+// --- Utility Functions ---
+
+const generateAccords = (description) => {
+  const text = description.toLowerCase();
+  const potentialAccords = [
+    { label: "Earth", color: "bg-amber-950", text: "text-amber-100", keywords: ["earth", "dirt", "soil", "peat", "dark", "heavy"] },
+    { label: "Spice", color: "bg-red-800", text: "text-red-100", keywords: ["spice", "pepper", "spicy", "cinnamon", "cumin", "saffron", "kick"] },
+    { label: "Wood", color: "bg-amber-700", text: "text-amber-100", keywords: ["wood", "cedar", "oak", "woody", "pine", "hickory"] },
+    { label: "Cocoa", color: "bg-stone-800", text: "text-stone-200", keywords: ["cocoa", "chocolate", "espresso", "coffee", "mocha", "bean"] },
+    { label: "Sweet", color: "bg-orange-700", text: "text-orange-100", keywords: ["sweet", "sugar", "fruit", "cherry", "raisin", "caramel", "vanilla", "honey", "maple"] },
+    { label: "Cream", color: "bg-yellow-100", text: "text-yellow-900", keywords: ["cream", "butter", "milk", "smooth", "velvety"] },
+    { label: "Leather", color: "bg-stone-600", text: "text-stone-100", keywords: ["leather", "animal", "tanned"] },
+    { label: "Nutty", color: "bg-amber-200", text: "text-amber-900", keywords: ["nut", "almond", "walnut", "cashew", "peanut", "chestnut"] },
+    { label: "Herbal", color: "bg-green-800", text: "text-green-100", keywords: ["grass", "hay", "tea", "floral", "herb", "mint"] },
+  ];
+
+  let foundAccords = potentialAccords.filter(accord => 
+    accord.keywords.some(k => text.includes(k))
+  );
+
+  if (foundAccords.length < 2) {
+    foundAccords.push({ label: "Tobacco", color: "bg-amber-800", text: "text-amber-100", keywords: [] });
+  }
+  
+  return foundAccords.map((acc, i) => ({
+    ...acc,
+    width: Math.max(20, 100 - (i * 15)) + '%'
+  }));
+};
+
+const generateStats = (cigar) => {
+  const desc = cigar.description.toLowerCase();
+  let strength = 50; 
+  
+  if (desc.includes('full-bodied') || desc.includes('strong') || desc.includes('powerhouse') || desc.includes('intense')) {
+    strength = 85;
+  } else if (desc.includes('medium-to-full') || desc.includes('medium to full')) {
+    strength = 70;
+  } else if (desc.includes('mild-to-medium') || desc.includes('mild to medium')) {
+    strength = 35;
+  } else if (desc.includes('mild') || desc.includes('smooth') || desc.includes('creamy')) {
+    strength = 20;
+  }
+
+  const nameHash = cigar.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const draw = 60 + (nameHash % 30); 
+  const burn = 70 + (nameHash % 25);
+
+  return { strength, draw, burn };
+};
+
+// --- Components ---
+
+const StarRating = ({ rating, setRating, editable = false, size = 20 }) => {
+  const [hover, setHover] = useState(0);
+  return (
+    <div className="flex space-x-1">
+      {[1, 2, 3, 4, 5].map((star) => {
+        const isFilled = editable ? star <= (hover || rating) : star <= rating;
+        return (
+          <button
+            type="button"
+            key={star}
+            className={`focus:outline-none transition-colors duration-200 ${editable ? 'cursor-pointer' : 'cursor-default'}`}
+            onClick={() => editable && setRating(star)}
+            onMouseEnter={() => editable && setHover(star)}
+            onMouseLeave={() => editable && setHover(rating)}
+            disabled={!editable}
+          >
+            <Star size={size} className={`${isFilled ? 'fill-amber-500 text-amber-500' : 'fill-stone-700 text-stone-700'}`} />
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const ReviewCard = ({ review, isOwner, onDelete }) => {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  
+  return (
+    <div className="bg-stone-900 border border-stone-800 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:border-amber-900/50 relative group overflow-hidden">
+      <div className="flex h-32 w-full">
+        <div className="w-32 h-full shrink-0 relative">
+           <img 
+            src={review.imageUrl || getImageForCigar({description: '', name: review.cigarName})} 
+            alt={review.cigarName} 
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent to-stone-900"></div>
+        </div>
+        <div className="p-4 flex-1 flex flex-col justify-center relative">
+           {isOwner && (
+            <div className="absolute top-2 right-2 z-10">
+               <button 
+                onClick={() => confirmDelete ? onDelete(review.id) : setConfirmDelete(true)}
+                className={`transition-all p-1 rounded-full backdrop-blur-sm ${confirmDelete ? 'bg-red-900/80 text-red-200 w-auto px-3' : 'bg-stone-800 text-stone-500 hover:text-red-400 opacity-0 group-hover:opacity-100'}`}
+              >
+                {confirmDelete ? <span className="text-xs font-bold">Confirm</span> : <Trash2 size={14} />}
+              </button>
+            </div>
+          )}
+          <div className="mb-1">
+            <h3 className="text-base font-serif font-bold text-amber-100 leading-tight">{review.cigarName}</h3>
+            <p className="text-amber-600 text-[10px] font-bold uppercase tracking-wider">{review.brand}</p>
+          </div>
+          <StarRating rating={review.rating} size={12} />
+        </div>
+      </div>
+      
+      <div className="px-5 pb-5">
+        <div className="relative pl-3 border-l-2 border-stone-700 mb-3">
+          <p className="text-stone-400 leading-relaxed font-light text-sm italic line-clamp-3">"{review.notes}"</p>
+        </div>
+        <div className="flex justify-between items-end border-t border-stone-800 pt-2">
+          <div className="flex items-center gap-2">
+             <div className="w-5 h-5 rounded-full bg-stone-800 flex items-center justify-center text-[9px] font-bold text-stone-500">
+               {review.userId ? review.userId.slice(0, 1).toUpperCase() : 'U'}
+             </div>
+             <span className="text-stone-600 text-xs">User {review.userId ? review.userId.slice(-4) : 'Anon'}</span>
+          </div>
+          <span className="text-stone-700 text-[10px]">{review.timestamp ? new Date(review.timestamp.seconds * 1000).toLocaleDateString() : 'Just now'}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Main Page Component: The Vault ---
+const VaultView = ({ catalog, onSelect, onFilter, searchTerm }) => {
+  const grouped = useMemo(() => {
+    const groups = {};
+    catalog.forEach(c => {
+      if (searchTerm) {
+        if (c.name.toLowerCase().includes(searchTerm.toLowerCase()) || c.brand.toLowerCase().includes(searchTerm.toLowerCase())) {
+           if (!groups[c.brand]) groups[c.brand] = [];
+           groups[c.brand].push(c);
+        }
+      } else {
+        if (!groups[c.brand]) groups[c.brand] = [];
+        groups[c.brand].push(c);
+      }
+    });
+    return groups;
+  }, [catalog, searchTerm]);
+
+  return (
+    <div className="grid grid-cols-1 gap-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+       {Object.keys(grouped).sort().map(brand => (
+         <div key={brand} className="space-y-4">
+            <h2 className="text-2xl font-serif text-stone-400 border-b border-stone-800 pb-2 flex items-center gap-3 sticky top-16 bg-stone-950 z-20 py-2">
+              <span className="w-2 h-8 bg-amber-700 rounded-full"></span> {brand}
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {grouped[brand].map((cigar, idx) => {
+                const safeImage = cigar.imageUrl || getImageForCigar(cigar);
+                return (
+                  <button 
+                    key={idx} 
+                    onClick={() => onSelect(cigar)}
+                    className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden hover:border-amber-700/50 hover:shadow-xl hover:shadow-amber-900/10 transition-all group text-left flex h-40 relative"
+                  >
+                    <div className="w-40 h-full relative shrink-0">
+                      <img 
+                        src={safeImage} 
+                        alt={cigar.name} 
+                        className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-all duration-700"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent to-stone-900"></div>
+                    </div>
+                    <div className="p-4 flex flex-col justify-center relative z-10 flex-1">
+                      <div className="text-amber-100 font-serif font-bold text-lg leading-tight mb-1">{cigar.name}</div>
+                      <p className="text-stone-500 text-[10px] uppercase tracking-widest font-bold mb-2">{cigar.brand}</p>
+                      <div className="text-stone-400 text-xs line-clamp-2 leading-relaxed opacity-70">
+                        {cigar.description}
+                      </div>
+                      <div className="mt-auto pt-2 text-amber-600 text-xs font-bold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity transform translate-x-2 group-hover:translate-x-0 duration-300">
+                        Explore Profile <ArrowLeft size={10} className="rotate-180" />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+         </div>
+       ))}
+       {Object.keys(grouped).length === 0 && (
+         <div className="text-center py-32">
+           <div className="inline-block p-6 rounded-full bg-stone-900 mb-6 text-stone-700"><Search size={48}/></div>
+           <h3 className="text-stone-400 text-xl font-serif mb-2">No cigars found</h3>
+           <p className="text-stone-600">Try searching for a different brand or cigar name.</p>
+         </div>
+       )}
+    </div>
+  );
+};
+
+// --- Page: Cigar Detail (Fragrantica Style) ---
+const CigarDetailPage = ({ cigar, onBack, onWriteReview, allReviews }) => {
+  const accords = useMemo(() => generateAccords(cigar.description), [cigar]);
+  const stats = useMemo(() => generateStats(cigar), [cigar]);
+  const safeImage = cigar.imageUrl || getImageForCigar(cigar);
+  
+  const cigarReviews = allReviews.filter(r => r.cigarName.toLowerCase() === cigar.name.toLowerCase() && r.brand.toLowerCase() === cigar.brand.toLowerCase());
+  const averageRating = cigarReviews.length > 0 ? (cigarReviews.reduce((acc, r) => acc + r.rating, 0) / cigarReviews.length).toFixed(1) : "N/A";
+
+  return (
+    <div className="animate-in slide-in-from-right duration-300 min-h-screen pb-20">
+      <div className="bg-stone-950 border-b border-amber-900/30 px-4 py-4 sticky top-0 z-40 flex items-center gap-4 shadow-md backdrop-blur-md bg-opacity-90">
+        <button onClick={onBack} className="text-stone-400 hover:text-amber-500 transition-colors flex items-center gap-2 text-sm font-medium">
+          <div className="bg-stone-900 p-1 rounded-full border border-stone-800"><ArrowLeft size={16} /></div>
+          Back to Vault
+        </button>
+        <div className="h-6 w-px bg-stone-800"></div>
+        <span className="text-stone-500 text-sm uppercase tracking-widest font-bold">{cigar.brand}</span>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          
+          {/* Left Col: Image & Basic Info (4 cols) */}
+          <div className="lg:col-span-4 space-y-6">
+            <div className="bg-stone-900 rounded-2xl border border-stone-800 p-6 flex flex-col items-center text-center shadow-2xl relative overflow-hidden group">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-700 via-amber-500 to-amber-700"></div>
+              
+              {/* Cigar Image - Square/Rounded */}
+              <div className="w-full aspect-square bg-stone-950 rounded-xl border border-stone-800 shadow-lg mb-6 relative overflow-hidden">
+                 <img 
+                    src={safeImage} 
+                    alt={cigar.name} 
+                    className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105" 
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-stone-900/50 to-transparent pointer-events-none"></div>
+              </div>
+
+              <h1 className="text-3xl font-serif font-bold text-amber-100 leading-none mb-2">{cigar.name}</h1>
+              <h2 className="text-stone-500 font-medium uppercase tracking-widest text-xs mb-6 bg-stone-950 px-3 py-1 rounded-full border border-stone-800">{cigar.brand}</h2>
+
+              <div className="flex items-center gap-2 mb-2 bg-stone-950/50 px-4 py-2 rounded-full border border-stone-800/50">
+                <div className="flex text-amber-500">
+                  {[1,2,3,4,5].map(s => <Star key={s} className={s <= Math.round(Number(averageRating)) ? "fill-amber-500" : "fill-stone-800 text-stone-800"} size={16} />)}
+                </div>
+                <span className="text-xl font-bold text-stone-200 ml-2">{averageRating}</span>
+              </div>
+              <p className="text-stone-500 text-xs">{cigarReviews.length} community reviews</p>
+
+              <button 
+                onClick={() => onWriteReview(cigar)}
+                className="mt-8 w-full bg-amber-700 hover:bg-amber-600 text-white py-3 rounded-xl font-bold transition-all shadow-lg shadow-amber-900/20 flex items-center justify-center gap-2 group border border-amber-600"
+              >
+                <PlusCircle size={18} className="group-hover:scale-110 transition-transform" />
+                Rate & Review
+              </button>
+            </div>
+
+            {/* Characteristics Bars */}
+            <div className="bg-stone-900 border border-stone-800 rounded-2xl p-6">
+              <h3 className="text-stone-400 font-serif font-bold mb-6 flex items-center gap-2 border-b border-stone-800 pb-2">
+                <BarChart3 size={16} className="text-amber-600" /> Characteristics
+              </h3>
+              
+              <div className="space-y-6">
+                {/* Strength */}
+                <div>
+                  <div className="flex justify-between text-xs text-stone-500 mb-2 uppercase tracking-wider font-bold">
+                    <span>Mild</span>
+                    <span>Strength</span>
+                    <span>Full</span>
+                  </div>
+                  <div className="h-2 bg-stone-950 rounded-full overflow-hidden flex relative border border-stone-800">
+                    <div className="w-1/3 h-full bg-stone-800"></div>
+                    <div className="w-1/3 h-full bg-stone-700"></div>
+                    <div className="w-1/3 h-full bg-stone-600"></div>
+                    <div 
+                      className="absolute w-4 h-4 bg-amber-500 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)] mt-[-5px] border-2 border-stone-900 transition-all duration-1000 ease-out" 
+                      style={{ left: `${stats.strength}%`, transform: 'translateX(-50%)' }}
+                    ></div> 
+                  </div>
+                </div>
+                
+                {/* Draw */}
+                <div>
+                   <div className="flex justify-between text-xs text-stone-500 mb-2 uppercase tracking-wider font-bold">
+                    <span>Tight</span>
+                    <span className="flex items-center gap-1"><Wind size={12}/> Draw</span>
+                    <span>Open</span>
+                  </div>
+                  <div className="h-2 bg-stone-950 rounded-full overflow-hidden relative border border-stone-800">
+                     <div className="w-full h-full bg-gradient-to-r from-stone-900 via-stone-700 to-stone-900"></div>
+                     <div 
+                      className="absolute w-4 h-4 bg-stone-300 rounded-full shadow-lg mt-[-5px] border-2 border-stone-900 transition-all duration-1000 ease-out" 
+                      style={{ left: `${stats.draw}%`, transform: 'translateX(-50%)' }}
+                    ></div>
+                  </div>
+                </div>
+
+                 {/* Burn */}
+                 <div>
+                   <div className="flex justify-between text-xs text-stone-500 mb-2 uppercase tracking-wider font-bold">
+                    <span>Uneven</span>
+                    <span className="flex items-center gap-1"><Thermometer size={12}/> Burn</span>
+                    <span>Sharp</span>
+                  </div>
+                  <div className="h-2 bg-stone-950 rounded-full overflow-hidden relative border border-stone-800">
+                     <div className="w-full h-full bg-gradient-to-r from-stone-900 to-amber-900/60"></div>
+                     <div 
+                      className="absolute w-4 h-4 bg-red-500 rounded-full shadow-[0_0_10px_rgba(239,68,68,0.6)] mt-[-5px] border-2 border-stone-900 transition-all duration-1000 ease-out" 
+                      style={{ left: `${stats.burn}%`, transform: 'translateX(-50%)' }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Col: Detailed Info (8 cols) */}
+          <div className="lg:col-span-8 space-y-8">
+            
+            {/* Main Accords (The Pyramid) */}
+            <div className="bg-stone-900 rounded-2xl p-8 border border-stone-800">
+              <h3 className="text-xl font-serif text-amber-100 mb-6 pb-2 border-b border-stone-800">Flavor Profile</h3>
+              
+              {/* VERTICAL LAYOUT AS REQUESTED */}
+              <div className="flex flex-col md:flex-row gap-8 items-center md:items-start">
+                {/* Left: Shape & Wrapper Vertical Stack */}
+                <div className="flex flex-col gap-6 min-w-[150px] w-full md:w-auto">
+                  <div>
+                     <div className="flex items-center gap-2 mb-1">
+                        <BoxSelect size={16} className="text-amber-500" />
+                        <span className="text-xs text-stone-500 uppercase tracking-wider font-bold">Vitola</span>
+                     </div>
+                     <div className="text-stone-200 font-serif font-bold text-lg">{cigar.shape || "Parejo"}</div>
+                  </div>
+                  
+                  <div>
+                     <div className="flex items-center gap-2 mb-1">
+                        <Layers size={16} className="text-amber-500" />
+                        <span className="text-xs text-stone-500 uppercase tracking-wider font-bold">Wrapper</span>
+                     </div>
+                     <div className="text-stone-200 font-serif font-bold text-lg">{cigar.wrapper || "N/A"}</div>
+                  </div>
+                </div>
+
+                {/* Separator */}
+                <div className="w-full h-px md:w-px md:h-auto bg-stone-800 md:self-stretch"></div>
+
+                {/* Right: Vertical Accords Stack */}
+                <div className="flex-1 flex flex-col gap-3 justify-center w-full">
+                   {accords.map((accord, idx) => (
+                    <div key={idx} className="flex items-center gap-3">
+                      <div className={`flex-1 h-8 rounded-r-lg ${accord.color} relative shadow-sm min-w-[24px] flex items-center px-3`} style={{ width: accord.width }}>
+                        <span className={`text-xs font-bold uppercase tracking-wider ${accord.text} whitespace-nowrap`}>
+                          {accord.label}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Description Text */}
+            <div className="prose prose-invert prose-stone max-w-none">
+              <h3 className="text-2xl font-serif text-amber-500 mb-4">The Experience</h3>
+              <p className="text-stone-300 leading-relaxed text-lg bg-stone-900/50 p-6 rounded-2xl border border-stone-800/50">
+                {cigar.description}
+              </p>
+            </div>
+
+            {/* Community Reviews Grid */}
+            <div>
+              <div className="flex items-center justify-between mb-6 border-b border-stone-800 pb-4">
+                <h3 className="text-xl font-serif text-amber-100">Member Reviews</h3>
+                <span className="bg-stone-800 text-stone-400 text-xs px-3 py-1 rounded-full border border-stone-700">{cigarReviews.length} Reviews</span>
+              </div>
+
+              {cigarReviews.length === 0 ? (
+                <div className="bg-stone-900 border border-stone-800 border-dashed rounded-2xl p-12 text-center">
+                  <BookOpen className="mx-auto text-stone-700 mb-4" size={48} />
+                  <p className="text-stone-500 mb-4 text-lg">No reviews specifically for this cigar yet.</p>
+                  <button 
+                    onClick={() => onWriteReview(cigar)}
+                    className="text-amber-500 hover:text-amber-400 font-bold underline"
+                  >
+                    Be the first to review it
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {cigarReviews.map(review => (
+                    <ReviewCard key={review.id} review={review} isOwner={false} onDelete={() => {}} />
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [reviews, setReviews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // Navigation State
+  const [currentView, setCurrentView] = useState('vault'); // 'vault' | 'feed' | 'detail'
+  const [selectedCigar, setSelectedCigar] = useState(null);
+  
+  // Modal States
+  const [showForm, setShowForm] = useState(false);
+  
+  // Form State
+  const [newReview, setNewReview] = useState({
+    brand: '',
+    cigarName: '',
+    rating: 0,
+    notes: '',
+    imageUrl: ''
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  // 1. Auth Initialization
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) { console.error("Auth error:", error); }
+    };
+    initAuth();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
+
+  // 2. Data Fetching
+  useEffect(() => {
+    if (!user) return;
+    const reviewsRef = collection(db, 'artifacts', appId, 'public', 'data', 'reviews');
+    return onSnapshot(reviewsRef, (snapshot) => {
+      const fetchedReviews = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      fetchedReviews.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+      setReviews(fetchedReviews);
+      setLoading(false);
+    }, (error) => { console.error("Firestore error:", error); setLoading(false); });
+  }, [user]);
+
+  const handleLoadSamples = async () => {
+    if (!user) return;
+    setSubmitting(true);
+    try {
+      const reviewsRef = collection(db, 'artifacts', appId, 'public', 'data', 'reviews');
+      await Promise.all(SAMPLE_REVIEWS.map(review => addDoc(reviewsRef, { ...review, userId: user.uid, timestamp: serverTimestamp() })));
+    } catch (error) { console.error("Error loading samples:", error); } finally { setSubmitting(false); }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!newReview.brand || !newReview.cigarName || newReview.rating === 0) return;
+    setSubmitting(true);
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'reviews'), { ...newReview, userId: user.uid, timestamp: serverTimestamp() });
+      setNewReview({ brand: '', cigarName: '', rating: 0, notes: '', imageUrl: '' });
+      setShowForm(false);
+    } catch (error) { console.error("Error adding review:", error); } finally { setSubmitting(false); }
+  };
+
+  const handleDelete = async (reviewId) => {
+    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reviews', reviewId)); } catch (error) { console.error("Error deleting:", error); }
+  };
+
+  const openReviewForm = (item) => {
+    setNewReview({ 
+      brand: item.brand, 
+      cigarName: item.name, 
+      rating: 0, 
+      notes: '', 
+      imageUrl: item.imageUrl || getImageForCigar(item)
+    });
+    setShowForm(true);
+  };
+  
+  const handleSelectCigar = (item) => {
+    setSelectedCigar(item);
+    setCurrentView('detail');
+  };
+
+  const handleBackToVault = () => {
+    setSelectedCigar(null);
+    setCurrentView('vault');
+  };
+
+  // Filter feed for Feed View
+  const filteredReviews = useMemo(() => reviews.filter(r => r.cigarName.toLowerCase().includes(searchTerm.toLowerCase()) || r.brand.toLowerCase().includes(searchTerm.toLowerCase())), [reviews, searchTerm]);
+
+  // --- Render ---
+
+  return (
+    <div className="min-h-screen bg-stone-950 text-stone-200 font-sans selection:bg-amber-900 selection:text-amber-100">
+      
+      {/* Navigation Header */}
+      <nav className="bg-stone-950 border-b border-amber-900/20 sticky top-0 z-50 backdrop-blur-xl bg-opacity-90">
+        <div className="max-w-6xl mx-auto px-4">
+          <div className="flex justify-between items-center h-16">
+            {/* Logo */}
+            <div className="flex items-center gap-3 cursor-pointer" onClick={() => setCurrentView('vault')}>
+              <div className="bg-gradient-to-br from-amber-600 to-amber-800 p-2 rounded-lg shadow-lg shadow-amber-900/30">
+                <Flame className="text-stone-950 fill-stone-950" size={20} />
+              </div>
+              <div>
+                <h1 className="text-xl font-serif font-bold text-amber-100 tracking-tight leading-none">The Humidor</h1>
+                <p className="text-[10px] text-amber-600/80 uppercase tracking-[0.2em] font-bold">Aficionado Vault</p>
+              </div>
+            </div>
+
+            {/* Nav Links */}
+            <div className="flex items-center gap-1 bg-stone-900/50 p-1 rounded-full border border-stone-800">
+               <button 
+                onClick={() => setCurrentView('vault')}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${currentView === 'vault' || currentView === 'detail' ? 'bg-stone-800 text-amber-100 shadow-sm border border-stone-700' : 'text-stone-500 hover:text-stone-300'}`}
+               >
+                 The Vault
+               </button>
+               <button 
+                onClick={() => setCurrentView('feed')}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${currentView === 'feed' ? 'bg-stone-800 text-amber-100 shadow-sm border border-stone-700' : 'text-stone-500 hover:text-stone-300'}`}
+               >
+                 Community Feed
+               </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Main Content Switcher */}
+      <main className="min-h-[calc(100vh-64px)]">
+        
+        {/* 1. VAULT VIEW */}
+        {(currentView === 'vault') && (
+          <div className="max-w-6xl mx-auto px-4 py-8">
+            <div className="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
+              <div>
+                <h2 className="text-3xl font-serif font-bold text-amber-100 mb-2">Cigar Vault</h2>
+                <p className="text-stone-400 max-w-xl">Browse our curated database of premium cigars. Select a cigar to view its detailed profile, flavor accords, and community ratings.</p>
+              </div>
+              <div className="relative w-full md:w-64">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="text-stone-600" size={16} /></div>
+                <input 
+                  type="text" 
+                  placeholder="Find a cigar..." 
+                  className="w-full bg-stone-900 border border-stone-800 rounded-lg py-2 pl-9 pr-4 text-stone-200 focus:outline-none focus:border-amber-800 transition-colors text-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+            </div>
+            <VaultView catalog={CIGAR_CATALOG} onSelect={handleSelectCigar} searchTerm={searchTerm} />
+          </div>
+        )}
+
+        {/* 2. DETAIL VIEW */}
+        {(currentView === 'detail' && selectedCigar) && (
+           <CigarDetailPage 
+             cigar={selectedCigar} 
+             onBack={handleBackToVault}
+             onWriteReview={openReviewForm}
+             allReviews={reviews}
+           />
+        )}
+
+        {/* 3. FEED VIEW */}
+        {(currentView === 'feed') && (
+          <div className="max-w-3xl mx-auto px-4 py-8">
+            <div className="flex justify-between items-center mb-6">
+               <h2 className="text-2xl font-serif font-bold text-amber-100">Community Board</h2>
+               <button 
+                onClick={() => { setNewReview({brand:'',cigarName:'',rating:0,notes:'',imageUrl:''}); setShowForm(true); }} 
+                className="bg-amber-700 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 shadow-lg shadow-amber-900/20 transition-all"
+               >
+                 <PlusCircle size={16} /> Post Review
+               </button>
+            </div>
+            
+            <div className="space-y-6">
+              {loading ? (
+                <div className="text-center py-20 text-stone-500"><Loader2 className="animate-spin mx-auto mb-2" /> Loading...</div>
+              ) : filteredReviews.length === 0 ? (
+                 <div className="text-center py-20 bg-stone-900 rounded-xl border border-stone-800 border-dashed">
+                    <p className="text-stone-500">No reviews yet. Be the first!</p>
+                 </div>
+              ) : (
+                filteredReviews.map(review => (
+                  <ReviewCard key={review.id} review={review} isOwner={user && user.uid === review.userId} onDelete={handleDelete} />
+                ))
+              )}
+            </div>
+            
+            {/* Expert Picks Loader */}
+            <div className="mt-12 text-center border-t border-stone-800 pt-8">
+              <button 
+                onClick={handleLoadSamples} 
+                disabled={submitting || !user} 
+                className="text-stone-600 hover:text-amber-600 text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 mx-auto transition-colors disabled:opacity-50"
+              >
+                 <DownloadCloud size={14} /> Load Expert Picks
+              </button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Global Review Form Modal */}
+      {showForm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+           <div className="bg-stone-900 border border-amber-900/30 rounded-2xl p-6 md:p-8 shadow-2xl relative overflow-hidden max-w-lg w-full ring-1 ring-white/10">
+              <div className="absolute -top-20 -right-20 w-64 h-64 bg-amber-600/10 rounded-full blur-3xl pointer-events-none"></div>
+              
+              <div className="flex justify-between items-start mb-6">
+                 <h2 className="text-2xl font-serif text-amber-100 flex items-center gap-2">
+                    <Cigarette className="text-amber-600" size={24} /> 
+                    {newReview.cigarName ? 'Review Cigar' : 'New Review'}
+                 </h2>
+                 <button onClick={() => setShowForm(false)} className="text-stone-500 hover:text-stone-200"><X size={20} /></button>
+              </div>
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {!newReview.cigarName && (
+                   <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5"><label className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">Brand</label><input required type="text" className="w-full bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-600 text-stone-200 text-sm" value={newReview.brand} onChange={(e) => setNewReview({...newReview, brand: e.target.value})} /></div>
+                    <div className="space-y-1.5"><label className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">Cigar Name</label><input required type="text" className="w-full bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-600 text-stone-200 text-sm" value={newReview.cigarName} onChange={(e) => setNewReview({...newReview, cigarName: e.target.value})} /></div>
+                  </div>
+                )}
+                
+                {newReview.cigarName && (
+                  <div className="bg-stone-800/50 p-3 rounded-lg border border-stone-800 mb-2">
+                     <p className="text-amber-500 text-xs font-bold uppercase">{newReview.brand}</p>
+                     <p className="text-stone-200 font-serif font-bold text-lg">{newReview.cigarName}</p>
+                  </div>
+                )}
+
+                 <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">Rating</label>
+                  <div className="bg-stone-800 border border-stone-700 rounded-lg p-3 flex justify-center"><StarRating rating={newReview.rating} setRating={(r) => setNewReview({...newReview, rating: r})} editable size={32} /></div>
+                </div>
+                 <div className="space-y-1.5"><label className="text-[10px] font-bold text-stone-500 uppercase tracking-wider">Notes</label><textarea required rows="4" placeholder="Flavor notes, burn quality, pairing..." className="w-full bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-600 text-stone-200 text-sm resize-none" value={newReview.notes} onChange={(e) => setNewReview({...newReview, notes: e.target.value})}></textarea></div>
+                
+                <button type="submit" disabled={submitting || newReview.rating === 0} className="w-full bg-amber-700 hover:bg-amber-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 mt-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg">
+                  {submitting ? <Loader2 className="animate-spin" size={18} /> : 'Post Review'}
+                </button>
+              </form>
+           </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
